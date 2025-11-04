@@ -19,17 +19,32 @@ body{background:linear-gradient(135deg,#f8fafc,#fff);font-family:Inter,system-ui
 .choice{transition:transform .12s,box-shadow .12s,background .12s,border-color .12s}
 .choice:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(99,102,241,.14)}
 .choice.selected{border-color:#6366f1;background:linear-gradient(180deg,#ffffff,#eef2ff)}
+.choice.correct{border-color:#16a34a;background:#ecfdf5}
+.choice.wrong{border-color:#dc2626;background:#fef2f2}
+.choice:disabled{opacity:.7;cursor:not-allowed}
+.reveal{margin-top:.5rem;font-size:.9rem}
+.reveal .ok{color:#166534}
+.reveal .bad{color:#991b1b}
 .sticky-submit{position:sticky;bottom:-8px;background:linear-gradient(180deg,rgba(255,255,255,0),rgba(255,255,255,.95));padding-top:8px}
 .section-title{font-weight:700;margin:12px 0 6px}
 .fade{animation:fade .28s ease-out both}@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .small-note{font-size:.75rem;color:#6b7280}
+.badge{border-radius:.5rem;padding:.15rem .45rem;font-size:.75rem;font-weight:600}
+.badge-ok{background:#dcfce7;color:#166534}
+.badge-wrong{background:#fee2e2;color:#991b1b}
+.badge-blank{background:#e5e7eb;color:#374151}
+.row{display:grid;grid-template-columns:64px 1fr 90px 120px;gap:.5rem;align-items:center}
+.row div{font-size:.9rem}
+@media (max-width:640px){ .row{grid-template-columns:54px 1fr 70px 104px} }
 </style>
 </head>
 <body class="min-h-screen flex items-start justify-center py-8">
 <div class="w-full max-w-4xl px-4">
   <header class="mb-4 text-center">
     <h1 class="text-2xl font-extrabold">Exercise 3 – 33 câu trắc nghiệm</h1>
-    <p class="text-sm text-gray-500">Làm xong bấm <b>Nộp bài</b> để xem điểm. <b>Làm lại</b> sẽ xáo trộn thứ tự câu hỏi & đáp án. <b>CHÚC CÁC BẠN THI TỐT</b>.</p>
+    <p class="text-sm text-gray-500">
+      Bấm chọn đáp án: <b>hiện ngay đúng/sai + đáp án đúng của câu đó</b>. <b>Làm lại</b> sẽ xáo trộn câu & đáp án. F5 <b>không mất bài</b>.
+    </p>
   </header>
 
   <div class="card space-y-4 fade">
@@ -53,7 +68,7 @@ body{background:linear-gradient(135deg,#f8fafc,#fff);font-family:Inter,system-ui
 
     <div class="sticky-submit">
       <button id="btnSubmitBottom" class="btn btn-primary w-full">Nộp bài</button>
-      <div class="small-note mt-2">* Chỉ hiển thị tổng điểm sau khi nộp.</div>
+      <div class="small-note mt-2">* Có thể xem bảng tổng kết trong tab “Kết quả”.</div>
     </div>
 
     <div id="resultArea" class="hidden">
@@ -65,7 +80,11 @@ body{background:linear-gradient(135deg,#f8fafc,#fff);font-family:Inter,system-ui
           <div class="p-3 bg-white rounded shadow text-center"><div class="text-sm text-gray-500">Sai</div><div id="numWrong" class="text-xl font-semibold text-rose-600">0</div></div>
           <div class="p-3 bg-white rounded shadow text-center"><div class="text-sm text-gray-500">Chưa chọn</div><div id="numBlank" class="text-xl font-semibold text-gray-600">0</div></div>
         </div>
-        <p class="text-xs text-gray-500 mt-4">Kết quả chỉ hiện sau khi nộp bài.</p>
+
+        <div class="text-left mt-6">
+          <button id="toggleDetail" class="btn btn-ghost w-full">Xem chi tiết từng câu</button>
+          <div id="detailList" class="hidden mt-3 p-3 bg-white rounded-lg border space-y-2"></div>
+        </div>
       </div>
     </div>
 
@@ -78,9 +97,9 @@ document.getElementById('yy').textContent = new Date().getFullYear();
 
 /* ===== CẤU HÌNH ===== */
 const EXAM_MINUTES = 20;
-const STORAGE_KEY = "exercise3_33_fix_v2";
+const STORAGE_KEY   = "exercise3_33_reveal_per_question_v1";
 
-/* ===== Exercise 3 – 33 câu ===== */
+/* ===== 33 câu ===== */
 const QUESTIONS_SOURCE = [
   {id:"ex3-1", prompt:"Parents should share household ______ so that no one feels overloaded.", options:["jobs","work","chores","duties"], answer:2},
   {id:"ex3-2", prompt:"We should use public transport more often to help protect the ______.", options:["nature","air","planet","environment"], answer:3},
@@ -132,6 +151,8 @@ const scoreSmall = document.getElementById('scoreSmall');
 const numCorrect = document.getElementById('numCorrect');
 const numWrong = document.getElementById('numWrong');
 const numBlank = document.getElementById('numBlank');
+const detailList = document.getElementById('detailList');
+const toggleDetail = document.getElementById('toggleDetail');
 
 let state=null, timer=null;
 
@@ -139,6 +160,7 @@ function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.rand
 function formatMMSS(s){ const m=String(Math.floor(s/60)).padStart(2,"0"); const sc=String(s%60).padStart(2,"0"); return `${m}:${sc}`; }
 function persist(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 function restore(){ try{const s=localStorage.getItem(STORAGE_KEY); return s?JSON.parse(s):null;}catch{return null;} }
+function letter(idx){ return idx>=0 ? String.fromCharCode(65+idx) : "-" }
 
 function buildNewAttempt(){
   const working = QUESTIONS_SOURCE.map(q=>({...q,options:[...q.options]}));
@@ -149,7 +171,37 @@ function buildNewAttempt(){
     q._order=pairs.map(p=>p.idx);   // idx hiển thị -> idx gốc
     q._opts =pairs.map(p=>p.opt);
   });
-  return {working,answers:{},remainSec:EXAM_MINUTES*60,submitted:false};
+  return {working,answers:{},revealed:{},remainSec:EXAM_MINUTES*60,submitted:false};
+}
+
+function handleChoice(q, idx, grid, card){
+  // đã trả lời rồi thì bỏ qua
+  if (state.revealed[q.id]) return;
+  state.answers[q.id]=idx;
+  state.revealed[q.id]=true;
+
+  // xác định đúng/sai
+  const correctShownIdx = q._order.findIndex(i=>Number(i)===Number(q.answer));
+  const isCorrect = (idx===correctShownIdx);
+
+  // khoá các nút
+  [...grid.children].forEach((btn,i)=>{
+    btn.disabled = true;
+    btn.classList.remove('selected');
+    // tô màu: đáp án đúng -> xanh; bạn chọn sai -> đỏ
+    if (i===correctShownIdx) btn.classList.add('correct','ring-1','ring-green-500');
+    if (!isCorrect && i===idx) btn.classList.add('wrong','ring-1','ring-red-500');
+  });
+
+  // thêm khối Giải
+  const rev = document.createElement('div');
+  rev.className = 'reveal';
+  rev.innerHTML = isCorrect
+    ? `<span class="ok font-medium">✅ Chính xác!</span> Đáp án đúng: <b>${letter(correctShownIdx)}</b>.`
+    : `<span class="bad font-medium">❌ Chưa đúng.</span> Đáp án đúng là <b>${letter(correctShownIdx)}</b>.`;
+  card.appendChild(rev);
+
+  persist();
 }
 
 function renderQuiz(){
@@ -167,16 +219,32 @@ function renderQuiz(){
       const btn=document.createElement('button');
       btn.className='choice w-full text-left px-3 py-2 rounded border bg-gray-50';
       btn.innerHTML=`<b class="pr-2">${String.fromCharCode(65+idx)}.</b> ${txt}`;
-      if(state.answers[q.id]===idx) btn.classList.add('selected','ring-1','ring-indigo-500');
-      btn.addEventListener('click',()=>{
-        state.answers[q.id]=idx;
-        [...grid.children].forEach(c=>c.classList.remove('selected','ring-1','ring-indigo-500'));
-        btn.classList.add('selected','ring-1','ring-indigo-500');
-        persist();
-      });
+
+      // Nếu đã trả lời trước đó (khôi phục từ localStorage), render lại trạng thái
+      if (state.answers[q.id]===idx && state.revealed[q.id]) btn.classList.add('selected');
+      btn.addEventListener('click',()=>handleChoice(q, idx, grid, card));
+
       grid.appendChild(btn);
     });
     card.appendChild(grid);
+
+    // Nếu đã reveal trước (F5), phải tô màu + hiển thị giải
+    if (state.revealed[q.id]) {
+      const chosenIdx = state.answers[q.id];
+      const correctShownIdx = q._order.findIndex(i=>Number(i)===Number(q.answer));
+      [...grid.children].forEach((btn,i)=>{
+        btn.disabled = true;
+        if (i===correctShownIdx) btn.classList.add('correct','ring-1','ring-green-500');
+        if (i===chosenIdx && i!==correctShownIdx) btn.classList.add('wrong','ring-1','ring-red-500');
+      });
+      const rev = document.createElement('div');
+      rev.className = 'reveal';
+      rev.innerHTML = (chosenIdx===correctShownIdx)
+        ? `<span class="ok font-medium">✅ Chính xác!</span> Đáp án đúng: <b>${letter(correctShownIdx)}</b>.`
+        : `<span class="bad font-medium">❌ Chưa đúng.</span> Đáp án đúng là <b>${letter(correctShownIdx)}</b>.`;
+      card.appendChild(rev);
+    }
+
     quizArea.appendChild(card);
   });
 }
@@ -186,12 +254,35 @@ function grade(){
   state.working.forEach(q=>{
     const chosen=state.answers[q.id];
     if(typeof chosen!=='number'){ blank++; return; }
-    const originalIndex=q._order[chosen];
-    if(Number(originalIndex)===Number(q.answer)) correct++;
+    const correctShownIdx = q._order.findIndex(i=>Number(i)===Number(q.answer));
+    if(chosen===correctShownIdx) correct++;
   });
   const wrong = total - correct - blank;
   const percent = total? Math.round(100*correct/total):0;
   return {total,correct,wrong,blank,percent};
+}
+
+function buildReviewHTML(){
+  const rows = state.working.map((q,idx)=>{
+    const chosenIdx = state.answers[q.id];
+    const correctShownIdx = q._order.findIndex(i=>Number(i)===Number(q.answer));
+    let badgeClass='badge-blank', badgeText='Chưa chọn';
+    if(typeof chosenIdx==='number'){
+      if(chosenIdx===correctShownIdx){ badgeClass='badge-ok'; badgeText='Đúng'; }
+      else { badgeClass='badge-wrong'; badgeText='Sai'; }
+    }
+    const you = typeof chosenIdx==='number' ? letter(chosenIdx) : '-';
+    const corr= letter(correctShownIdx);
+    return `
+      <div class="row">
+        <div class="text-gray-500">Câu ${idx+1}</div>
+        <div class="text-gray-800 truncate">${q.prompt}</div>
+        <div><span class="badge ${badgeClass}">${badgeText}</span></div>
+        <div class="text-right sm:text-left"><span class="text-gray-500 mr-1">Bạn:</span><b>${you}</b> · <span class="text-gray-500 mr-1">Đúng:</span><b>${corr}</b></div>
+      </div>
+    `;
+  }).join('');
+  return `<div class="text-sm text-gray-600 mb-2">Chi tiết:</div><div class="space-y-2">${rows}</div>`;
 }
 
 function showResult(){
@@ -199,9 +290,11 @@ function showResult(){
   scoreBig.textContent=`${r.percent}%`;
   scoreSmall.textContent=`${r.correct}/${r.total} câu đúng`;
   numCorrect.textContent=r.correct; numWrong.textContent=r.wrong; numBlank.textContent=r.blank;
+  if(detailList){ detailList.innerHTML = buildReviewHTML(); }
   resultArea.classList.remove('hidden'); showTab('result');
 }
 
+/* ===== TIMER ===== */
 function startTimer(){
   stopTimer();
   timer=setInterval(()=>{
@@ -218,6 +311,7 @@ function updateClock(){
   progressEl.style.width=(Math.max(0,Math.min(1,used/(EXAM_MINUTES*60)))*100).toFixed(1)+'%';
 }
 
+/* ===== TAB & EVENTS ===== */
 function showTab(t){
   const q=document.getElementById('tabQuiz'), r=document.getElementById('tabResult');
   if(t==='quiz'){ q.classList.add('tab-active'); r.classList.remove('tab-active'); quizArea.classList.remove('hidden'); resultArea.classList.add('hidden'); }
@@ -235,12 +329,24 @@ document.getElementById('btnResetAll').addEventListener('click',()=>{
   state=buildNewAttempt(); persist(); renderQuiz(); updateClock(); startTimer(); showTab('quiz');
 });
 
+if (toggleDetail){
+  toggleDetail.addEventListener('click', ()=>{
+    const hidden = detailList.classList.contains('hidden');
+    detailList.classList.toggle('hidden', !hidden);
+    toggleDetail.textContent = hidden ? 'Ẩn chi tiết từng câu' : 'Xem chi tiết từng câu';
+  });
+}
+
 window.addEventListener('beforeunload',(e)=>{ if(!state.submitted){ e.preventDefault(); e.returnValue=''; } });
 
+/* ===== INIT ===== */
 (function init(){
   const restored=restore();
-  if(restored && !restored.submitted && restored.remainSec>0 && restored.working && restored.answers){ state=restored; }
-  else{ state=buildNewAttempt(); }
+  if(restored && restored.working && restored.answers && restored.revealed){
+    state=restored;
+  }else{
+    state=buildNewAttempt();
+  }
   renderQuiz(); updateClock(); if(!state.submitted) startTimer();
 })();
 </script>
